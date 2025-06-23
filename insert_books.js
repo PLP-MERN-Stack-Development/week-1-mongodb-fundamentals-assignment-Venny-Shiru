@@ -1,16 +1,23 @@
-// insert_books.js - Script to populate MongoDB with sample book data
+// insert_books.js - Enhanced version with better error handling
 
-// Import MongoDB client
 const { MongoClient } = require('mongodb');
 
-// Connection URI (replace with your MongoDB connection string if using Atlas)
+// Connection URI with options for better compatibility
 const uri = 'mongodb://localhost:27017';
+const options = {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+  socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+  maxPoolSize: 10, // Maintain up to 10 socket connections
+  minPoolSize: 5, // Maintain a minimum of 5 socket connections
+  maxIdleTimeMS: 30000, // Close connections after 30s of inactivity
+};
 
-// Database and collection names
 const dbName = 'plp_bookstore';
 const collectionName = 'books';
 
-// Sample book data
+// Sample book data (same as original)
 const books = [
   {
     title: 'To Kill a Mockingbird',
@@ -134,65 +141,132 @@ const books = [
   }
 ];
 
-// Function to insert books into MongoDB
+// Function to test MongoDB connection
+async function testConnection() {
+  const client = new MongoClient(uri, options);
+  
+  try {
+    console.log('Testing MongoDB connection...');
+    await client.connect();
+    
+    // Send a ping to confirm a successful connection
+    await client.db("admin").command({ ping: 1 });
+    console.log("✅ Successfully connected to MongoDB server");
+    
+    return client;
+  } catch (error) {
+    console.error("❌ MongoDB connection failed:");
+    
+    if (error.name === 'MongoServerSelectionError') {
+      console.error("- Make sure MongoDB is running on localhost:27017");
+      console.error("- Check if MongoDB service is started");
+    } else if (error.name === 'MongoParseError') {
+      console.error("- Check your connection URI format");
+    } else {
+      console.error("- Error details:", error.message);
+    }
+    
+    throw error;
+  }
+}
+
+// Enhanced function to insert books
 async function insertBooks() {
-  const client = new MongoClient(uri);
+  let client;
 
   try {
-    // Connect to the MongoDB server
-    await client.connect();
-    console.log('Connected to MongoDB server');
-
+    // Test connection first
+    client = await testConnection();
+    
     // Get database and collection
     const db = client.db(dbName);
     const collection = db.collection(collectionName);
 
     // Check if collection already has documents
+    console.log('\nChecking existing data...');
     const count = await collection.countDocuments();
+    
     if (count > 0) {
-      console.log(`Collection already contains ${count} documents. Dropping collection...`);
+      console.log(`📋 Collection already contains ${count} documents`);
+      console.log('🗑️  Dropping collection to start fresh...');
       await collection.drop();
-      console.log('Collection dropped successfully');
+      console.log('✅ Collection dropped successfully');
+    } else {
+      console.log('📋 Collection is empty, proceeding with insert');
     }
 
     // Insert the books
+    console.log('\n📚 Inserting books...');
     const result = await collection.insertMany(books);
-    console.log(`${result.insertedCount} books were successfully inserted into the database`);
+    console.log(`✅ ${result.insertedCount} books were successfully inserted!`);
 
-    // Display the inserted books
-    console.log('\nInserted books:');
-    const insertedBooks = await collection.find({}).toArray();
-    insertedBooks.forEach((book, index) => {
-      console.log(`${index + 1}. "${book.title}" by ${book.author} (${book.published_year})`);
+    // Verify insertion by counting documents
+    const newCount = await collection.countDocuments();
+    console.log(`📊 Total documents in collection: ${newCount}`);
+
+    // Display sample of inserted books
+    console.log('\n📖 Sample of inserted books:');
+    const sampleBooks = await collection.find({}).limit(5).toArray();
+    sampleBooks.forEach((book, index) => {
+      console.log(`  ${index + 1}. "${book.title}" by ${book.author} (${book.published_year}) - $${book.price}`);
     });
+    
+    if (books.length > 5) {
+      console.log(`  ... and ${books.length - 5} more books`);
+    }
 
-  } catch (err) {
-    console.error('Error occurred:', err);
+    // Create an index on commonly queried fields for better performance
+    console.log('\n🔍 Creating indexes for better query performance...');
+    await collection.createIndex({ author: 1 });
+    await collection.createIndex({ genre: 1 });
+    await collection.createIndex({ published_year: 1 });
+    console.log('✅ Indexes created successfully');
+
+  } catch (error) {
+    console.error('\n❌ Error occurred during operation:');
+    
+    if (error.name === 'MongoWriteError') {
+      console.error('- Database write error:', error.message);
+    } else if (error.name === 'MongoNetworkError') {
+      console.error('- Network connection error:', error.message);
+    } else {
+      console.error('- Unexpected error:', error.message);
+    }
+    
+    console.error('\n🔧 Troubleshooting tips:');
+    console.error('1. Ensure MongoDB is running: `mongod` or check system services');
+    console.error('2. Verify connection string is correct');
+    console.error('3. Check MongoDB logs for additional error details');
+    console.error('4. Ensure you have write permissions to the database');
+    
   } finally {
     // Close the connection
-    await client.close();
-    console.log('Connection closed');
+    if (client) {
+      await client.close();
+      console.log('\n🔌 Connection closed');
+    }
   }
 }
 
-// Run the function
-insertBooks().catch(console.error);
+// Main execution
+async function main() {
+  console.log('🚀 Starting MongoDB Book Import Script');
+  console.log('=====================================');
+  
+  try {
+    await insertBooks();
+    console.log('\n🎉 Script completed successfully!');
+    
+    console.log('\n💡 Try these MongoDB queries in your MongoDB shell:');
+    console.log('   db.books.find().pretty()');
+    console.log('   db.books.find({ author: "George Orwell" })');
+    console.log('   db.books.find({ in_stock: true }).count()');
+    
+  } catch (error) {
+    console.error('\n💥 Script failed to complete');
+    process.exit(1);
+  }
+}
 
-/*
- * Example MongoDB queries you can try after running this script:
- *
- * 1. Find all books:
- *    db.books.find()
- *
- * 2. Find books by a specific author:
- *    db.books.find({ author: "George Orwell" })
- *
- * 3. Find books published after 1950:
- *    db.books.find({ published_year: { $gt: 1950 } })
- *
- * 4. Find books in a specific genre:
- *    db.books.find({ genre: "Fiction" })
- *
- * 5. Find in-stock books:
- *    db.books.find({ in_stock: true })
- */ 
+// Run the script
+main();
